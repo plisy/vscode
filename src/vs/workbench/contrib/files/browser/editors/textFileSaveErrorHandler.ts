@@ -23,7 +23,7 @@ import { FileEditorInput } from 'vs/workbench/contrib/files/common/editors/fileE
 import { SAVE_FILE_COMMAND_ID, REVERT_FILE_COMMAND_ID, SAVE_FILE_AS_COMMAND_ID, SAVE_FILE_AS_LABEL } from 'vs/workbench/contrib/files/browser/fileCommands';
 import { INotificationService, INotificationHandle, INotificationActions, Severity } from 'vs/platform/notification/common/notification';
 import { IOpenerService } from 'vs/platform/opener/common/opener';
-import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
+import { IStorageService, StorageScope, StorageTarget } from 'vs/platform/storage/common/storage';
 import { ExecuteCommandAction } from 'vs/platform/actions/common/actions';
 import { IProductService } from 'vs/platform/product/common/productService';
 import { Event } from 'vs/base/common/event';
@@ -32,7 +32,6 @@ import { isWindows } from 'vs/base/common/platform';
 import { Schemas } from 'vs/base/common/network';
 import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
 import { SaveReason } from 'vs/workbench/common/editor';
-import { IStorageKeysSyncRegistryService } from 'vs/platform/userDataSync/common/storageKeys';
 
 export const CONFLICT_RESOLUTION_CONTEXT = 'saveConflictResolutionContext';
 export const CONFLICT_RESOLUTION_SCHEME = 'conflictResolution';
@@ -56,12 +55,8 @@ export class TextFileSaveErrorHandler extends Disposable implements ISaveErrorHa
 		@ITextModelService textModelService: ITextModelService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IStorageService private readonly storageService: IStorageService,
-		@IStorageKeysSyncRegistryService storageKeysSyncRegistryService: IStorageKeysSyncRegistryService
 	) {
 		super();
-
-		// opt-in to syncing
-		storageKeysSyncRegistryService.registerStorageKey({ key: LEARN_MORE_DIRTY_WRITE_IGNORE_KEY, version: 1 });
 
 		const provider = this._register(instantiationService.createInstance(TextFileContentProvider));
 		this._register(textModelService.registerTextModelContentProvider(CONFLICT_RESOLUTION_SCHEME, provider));
@@ -73,8 +68,8 @@ export class TextFileSaveErrorHandler extends Disposable implements ISaveErrorHa
 	}
 
 	private registerListeners(): void {
-		this._register(this.textFileService.files.onDidSave(e => this.onFileSavedOrReverted(e.model.resource)));
-		this._register(this.textFileService.files.onDidRevert(m => this.onFileSavedOrReverted(m.resource)));
+		this._register(this.textFileService.files.onDidSave(event => this.onFileSavedOrReverted(event.model.resource)));
+		this._register(this.textFileService.files.onDidRevert(model => this.onFileSavedOrReverted(model.resource)));
 		this._register(this.editorService.onDidActiveEditorChange(() => this.onActiveEditorChanged()));
 	}
 
@@ -225,7 +220,7 @@ class DoNotShowResolveConflictLearnMoreAction extends Action {
 	}
 
 	async run(notification: IDisposable): Promise<void> {
-		this.storageService.store(LEARN_MORE_DIRTY_WRITE_IGNORE_KEY, true, StorageScope.GLOBAL);
+		this.storageService.store(LEARN_MORE_DIRTY_WRITE_IGNORE_KEY, true, StorageScope.GLOBAL, StorageTarget.USER);
 
 		// Hide notification
 		notification.dispose();
@@ -239,13 +234,9 @@ class ResolveSaveConflictAction extends Action {
 		@IEditorService private readonly editorService: IEditorService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@IProductService private readonly productService: IProductService,
-		@IStorageKeysSyncRegistryService storageKeysSyncRegistryService: IStorageKeysSyncRegistryService
+		@IProductService private readonly productService: IProductService
 	) {
 		super('workbench.files.action.resolveConflict', nls.localize('compareChanges', "Compare"));
-
-		// opt-in to syncing
-		storageKeysSyncRegistryService.registerStorageKey({ key: LEARN_MORE_DIRTY_WRITE_IGNORE_KEY, version: 1 });
 	}
 
 	async run(): Promise<void> {
@@ -257,14 +248,14 @@ class ResolveSaveConflictAction extends Action {
 			await TextFileContentProvider.open(resource, CONFLICT_RESOLUTION_SCHEME, editorLabel, this.editorService, { pinned: true });
 
 			// Show additional help how to resolve the save conflict
-			const actions: INotificationActions = { primary: [this.instantiationService.createInstance(ResolveConflictLearnMoreAction)] };
+			const actions = { primary: [this.instantiationService.createInstance(ResolveConflictLearnMoreAction)] };
 			const handle = this.notificationService.notify({
 				severity: Severity.Info,
 				message: conflictEditorHelp,
 				actions,
 				neverShowAgain: { id: LEARN_MORE_DIRTY_WRITE_IGNORE_KEY, isSecondary: true }
 			});
-			Event.once(handle.onDidClose)(() => dispose(actions.primary!));
+			Event.once(handle.onDidClose)(() => dispose(actions.primary));
 			pendingResolveSaveConflictMessages.push(handle);
 		}
 	}
@@ -281,7 +272,7 @@ class SaveElevatedAction extends Action {
 
 	async run(): Promise<void> {
 		if (!this.model.isDisposed()) {
-			this.model.save({
+			await this.model.save({
 				writeElevated: true,
 				overwriteReadonly: this.triedToMakeWriteable,
 				reason: SaveReason.EXPLICIT
@@ -300,7 +291,7 @@ class OverwriteReadonlyAction extends Action {
 
 	async run(): Promise<void> {
 		if (!this.model.isDisposed()) {
-			this.model.save({ overwriteReadonly: true, reason: SaveReason.EXPLICIT });
+			await this.model.save({ overwriteReadonly: true, reason: SaveReason.EXPLICIT });
 		}
 	}
 }
@@ -315,7 +306,7 @@ class SaveIgnoreModifiedSinceAction extends Action {
 
 	async run(): Promise<void> {
 		if (!this.model.isDisposed()) {
-			this.model.save({ ignoreModifiedSince: true, reason: SaveReason.EXPLICIT });
+			await this.model.save({ ignoreModifiedSince: true, reason: SaveReason.EXPLICIT });
 		}
 	}
 }

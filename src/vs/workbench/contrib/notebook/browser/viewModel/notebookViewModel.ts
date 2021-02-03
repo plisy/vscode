@@ -26,7 +26,7 @@ import { NotebookCellTextModel } from 'vs/workbench/contrib/notebook/common/mode
 import { CellKind, NotebookCellMetadata, INotebookSearchOptions, ICellRange, NotebookCellsChangeType, ICell, NotebookCellTextModelSplice, CellEditType, IProcessedOutput } from 'vs/workbench/contrib/notebook/common/notebookCommon';
 import { FoldingRegions } from 'vs/editor/contrib/folding/foldingRanges';
 import { NotebookTextModel } from 'vs/workbench/contrib/notebook/common/model/notebookTextModel';
-import { MarkdownRenderer } from 'vs/workbench/contrib/notebook/browser/view/renderers/mdRenderer';
+import { MarkdownRenderer } from 'vs/editor/browser/core/markdownRenderer';
 import { dirname } from 'vs/base/common/resources';
 import { IPosition, Position } from 'vs/editor/common/core/position';
 import { MultiModelEditStackElement, SingleModelEditStackElement } from 'vs/editor/common/model/editStack';
@@ -178,6 +178,10 @@ export class NotebookViewModel extends Disposable implements EditorFoldingStateD
 
 	get metadata() {
 		return this._notebook.metadata;
+	}
+
+	get runnable() {
+		return !!this._notebook.metadata?.runnable && !!this._notebook.metadata?.trusted;
 	}
 
 	private readonly _onDidChangeViewCells = this._register(new Emitter<INotebookViewCellsUpdateEvent>());
@@ -348,7 +352,7 @@ export class NotebookViewModel extends Disposable implements EditorFoldingStateD
 			});
 		}));
 
-		this._viewCells = this._notebook!.cells.map(cell => {
+		this._viewCells = this._notebook.cells.map(cell => {
 			return createCellViewModel(this._instantiationService, this, cell);
 		});
 
@@ -1162,7 +1166,7 @@ export function createCellViewModel(instantiationService: IInstantiationService,
 	if (cell.cellKind === CellKind.Code) {
 		return instantiationService.createInstance(CodeCellViewModel, notebookViewModel.viewType, cell, notebookViewModel.layoutInfo, notebookViewModel.eventDispatcher);
 	} else {
-		const mdRenderer = instantiationService.createInstance(MarkdownRenderer, dirname(notebookViewModel.uri));
+		const mdRenderer = instantiationService.createInstance(MarkdownRenderer, { baseUrl: dirname(notebookViewModel.uri) });
 		return instantiationService.createInstance(MarkdownCellViewModel, notebookViewModel.viewType, cell, notebookViewModel.layoutInfo, notebookViewModel, notebookViewModel.eventDispatcher, mdRenderer);
 	}
 }

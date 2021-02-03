@@ -6,7 +6,6 @@
 import * as dom from 'vs/base/browser/dom';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { Action, IAction } from 'vs/base/common/actions';
-import * as arrays from 'vs/base/common/arrays';
 import { Color } from 'vs/base/common/color';
 import { Emitter, Event } from 'vs/base/common/event';
 import { IDisposable, DisposableStore } from 'vs/base/common/lifecycle';
@@ -22,17 +21,17 @@ import { ITextModel } from 'vs/editor/common/model';
 import * as modes from 'vs/editor/common/modes';
 import { IModelService } from 'vs/editor/common/services/modelService';
 import { IModeService } from 'vs/editor/common/services/modeService';
-import { MarkdownRenderer } from 'vs/editor/contrib/markdown/markdownRenderer';
+import { MarkdownRenderer } from 'vs/editor/browser/core/markdownRenderer';
 import { peekViewBorder } from 'vs/editor/contrib/peekView/peekView';
 import { ZoneWidget } from 'vs/editor/contrib/zoneWidget/zoneWidget';
 import * as nls from 'vs/nls';
-import { MenuEntryActionViewItem, SubmenuEntryActionViewItem } from 'vs/platform/actions/browser/menuEntryActionViewItem';
+import { createActionViewItem } from 'vs/platform/actions/browser/menuEntryActionViewItem';
 import { IMenu, MenuItemAction, SubmenuItemAction } from 'vs/platform/actions/common/actions';
 import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IOpenerService } from 'vs/platform/opener/common/opener';
 import { contrastBorder, editorForeground, focusBorder, inputValidationErrorBackground, inputValidationErrorBorder, inputValidationErrorForeground, textBlockQuoteBackground, textBlockQuoteBorder, textLinkActiveForeground, textLinkForeground, transparent } from 'vs/platform/theme/common/colorRegistry';
-import { IColorTheme, IThemeService } from 'vs/platform/theme/common/themeService';
+import { IColorTheme, IThemeService, ThemeIcon } from 'vs/platform/theme/common/themeService';
 import { CommentFormActions } from 'vs/workbench/contrib/comments/browser/commentFormActions';
 import { CommentGlyphWidget } from 'vs/workbench/contrib/comments/browser/commentGlyphWidget';
 import { CommentMenus } from 'vs/workbench/contrib/comments/browser/commentMenus';
@@ -46,10 +45,15 @@ import { ServiceCollection } from 'vs/platform/instantiation/common/serviceColle
 import { KeyCode } from 'vs/base/common/keyCodes';
 import { StandardKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { MOUSE_CURSOR_TEXT_CSS_CLASS_NAME } from 'vs/base/browser/ui/mouseCursor/mouseCursor';
-import { ActionViewItem } from 'vs/base/browser/ui/actionbar/actionViewItems';
+import { PANEL_BORDER } from 'vs/workbench/common/theme';
+import { registerIcon } from 'vs/platform/theme/common/iconRegistry';
+import { Codicon } from 'vs/base/common/codicons';
+
+
+const collapseIcon = registerIcon('review-comment-collapse', Codicon.chevronUp, nls.localize('collapseIcon', 'Icon to collapse a review comment.'));
 
 export const COMMENTEDITOR_DECORATION_KEY = 'commenteditordecoration';
-const COLLAPSE_ACTION_CLASS = 'expand-review-action codicon-chevron-up';
+const COLLAPSE_ACTION_CLASS = 'expand-review-action ' + ThemeIcon.asClassName(collapseIcon);
 const COMMENT_SCHEME = 'comment';
 
 
@@ -153,7 +157,7 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 		}));
 		this._applyTheme(this.themeService.getColorTheme());
 
-		this._markdownRenderer = this._globalToDispose.add(new MarkdownRenderer(editor, this.modeService, this.openerService));
+		this._markdownRenderer = this._globalToDispose.add(new MarkdownRenderer({ editor }, this.modeService, this.openerService));
 		this._parentEditor = editor;
 	}
 
@@ -234,15 +238,7 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 
 		const actionsContainer = dom.append(this._headElement, dom.$('.review-actions'));
 		this._actionbarWidget = new ActionBar(actionsContainer, {
-			actionViewItemProvider: (action: IAction) => {
-				if (action instanceof MenuItemAction) {
-					return this.instantiationService.createInstance(MenuEntryActionViewItem, action);
-				} else if (action instanceof SubmenuItemAction) {
-					return this.instantiationService.createInstance(SubmenuEntryActionViewItem, action);
-				} else {
-					return new ActionViewItem({}, action, { label: false, icon: true });
-				}
-			}
+			actionViewItemProvider: createActionViewItem.bind(undefined, this.instantiationService)
 		});
 
 		this._disposables.add(this._actionbarWidget);
@@ -450,8 +446,8 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 			}
 		}
 
-		// create comment thread only when not readonly
-		if (!this._commentThread.readOnly) {
+		// create comment thread only when it supports reply
+		if (this._commentThread.canReply) {
 			this.createCommentForm();
 		}
 
@@ -470,7 +466,7 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 
 		// If there are no existing comments, place focus on the text area. This must be done after show, which also moves focus.
 		// if this._commentThread.comments is undefined, it doesn't finish initialization yet, so we don't focus the editor immediately.
-		if (!this._commentThread.readOnly && this._commentReplyComponent) {
+		if (this._commentThread.canReply && this._commentReplyComponent) {
 			if (!this._commentThread.comments || !this._commentThread.comments.length) {
 				this._commentReplyComponent.editor.focus();
 			} else if (this._commentReplyComponent.editor.getModel()!.getValueLength() > 0) {
@@ -478,15 +474,15 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 			}
 		}
 
-		this._commentThreadDisposables.push(this._commentThread.onDidChangeReadOnly(() => {
+		this._commentThreadDisposables.push(this._commentThread.onDidChangeCanReply(() => {
 			if (this._commentReplyComponent) {
-				if (this._commentThread.readOnly) {
+				if (!this._commentThread.canReply) {
 					this._commentReplyComponent.form.style.display = 'none';
 				} else {
 					this._commentReplyComponent.form.style.display = 'block';
 				}
 			} else {
-				if (!this._commentThread.readOnly) {
+				if (this._commentThread.canReply) {
 					this.createCommentForm();
 				}
 			}
@@ -711,10 +707,7 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 		label = this._commentThread.label;
 
 		if (label === undefined) {
-			if (this._commentThread.comments && this._commentThread.comments.length) {
-				const participantsList = this._commentThread.comments.filter(arrays.uniqueFilter(comment => comment.userName)).map(comment => `@${comment.userName}`).join(', ');
-				label = nls.localize('commentThreadParticipants', "Participants: {0}", participantsList);
-			} else {
+			if (!(this._commentThread.comments && this._commentThread.comments.length)) {
 				label = nls.localize('startThread', "Start discussion");
 			}
 		}
@@ -883,13 +876,18 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 	}
 
 	private _applyTheme(theme: IColorTheme) {
-		const borderColor = theme.getColor(peekViewBorder) || Color.transparent;
+		const borderColor = theme.getColor(peekViewBorder);
 		this.style({
-			arrowColor: borderColor,
-			frameColor: borderColor
+			arrowColor: borderColor || Color.transparent,
+			frameColor: borderColor || Color.transparent
 		});
 
 		const content: string[] = [];
+
+		if (borderColor) {
+			content.push(`.monaco-editor .review-widget > .body { border-top: 1px solid ${borderColor} }`);
+		}
+
 		const linkColor = theme.getColor(textLinkForeground);
 		if (linkColor) {
 			content.push(`.monaco-editor .review-widget .body .comment-body a { color: ${linkColor} }`);
@@ -916,6 +914,11 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 			content.push(`.monaco-editor .review-widget .body .review-comment blockquote { border-color: ${blockQuoteBOrder}; }`);
 		}
 
+		const border = theme.getColor(PANEL_BORDER);
+		if (border) {
+			content.push(`.monaco-editor .review-widget .body .review-comment .review-comment-contents .comment-reactions .action-item a.action-label { border-color: ${border}; }`);
+		}
+
 		const hcBorder = theme.getColor(contrastBorder);
 		if (hcBorder) {
 			content.push(`.monaco-editor .review-widget .body .comment-form .review-thread-reply-button { outline-color: ${hcBorder}; }`);
@@ -939,7 +942,7 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 
 		const fontInfo = this.editor.getOption(EditorOption.fontInfo);
 		content.push(`.monaco-editor .review-widget .body code {
-			font-family: ${fontInfo.fontFamily};
+			font-family: '${fontInfo.fontFamily}';
 			font-size: ${fontInfo.fontSize}px;
 			font-weight: ${fontInfo.fontWeight};
 		}`);
@@ -957,9 +960,11 @@ export class ReviewZoneWidget extends ZoneWidget implements ICommentThreadWidget
 	}
 
 	hide() {
-		this._isExpanded = false;
-		// Focus the container so that the comment editor will be blurred before it is hidden
-		this.editor.focus();
+		if (this._isExpanded) {
+			this._isExpanded = false;
+			// Focus the container so that the comment editor will be blurred before it is hidden
+			this.editor.focus();
+		}
 		super.hide();
 	}
 

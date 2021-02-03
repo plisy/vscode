@@ -21,6 +21,8 @@ import { ViewContainer, IViewContainersRegistry, Extensions as ViewExtensions, V
 import { SyncDescriptor } from 'vs/platform/instantiation/common/descriptors';
 import { ViewPaneContainer } from 'vs/workbench/browser/parts/views/viewPaneContainer';
 import { Codicon } from 'vs/base/common/codicons';
+import { registerIcon } from 'vs/platform/theme/common/iconRegistry';
+import { localize } from 'vs/nls';
 
 
 export class MainThreadCommentThread implements modes.CommentThread {
@@ -84,15 +86,15 @@ export class MainThreadCommentThread implements modes.CommentThread {
 		return this._range;
 	}
 
-	private readonly _onDidChangeReadOnly = new Emitter<boolean>();
-	get onDidChangeReadOnly(): Event<boolean> { return this._onDidChangeReadOnly.event; }
-	set readOnly(state: boolean) {
-		this._readOnly = state;
-		this._onDidChangeReadOnly.fire(this._readOnly);
+	private readonly _onDidChangeCanReply = new Emitter<boolean>();
+	get onDidChangeCanReply(): Event<boolean> { return this._onDidChangeCanReply.event; }
+	set canReply(state: boolean) {
+		this._canReply = state;
+		this._onDidChangeCanReply.fire(this._canReply);
 	}
 
-	get readOnly() {
-		return this._readOnly;
+	get canReply() {
+		return this._canReply;
 	}
 
 	private readonly _onDidChangeRange = new Emitter<IRange>();
@@ -124,7 +126,7 @@ export class MainThreadCommentThread implements modes.CommentThread {
 		public threadId: string,
 		public resource: string,
 		private _range: IRange,
-		private _readOnly: boolean
+		private _canReply: boolean
 	) {
 		this._isDisposed = false;
 	}
@@ -138,7 +140,7 @@ export class MainThreadCommentThread implements modes.CommentThread {
 		if (modified('contextValue')) { this._contextValue = changes.contextValue; }
 		if (modified('comments')) { this._comments = changes.comments; }
 		if (modified('collapseState')) { this._collapsibleState = changes.collapseState; }
-		if (modified('readOnly')) { this.readOnly = changes.readOnly!; }
+		if (modified('canReply')) { this.canReply = changes.canReply!; }
 	}
 
 	dispose() {
@@ -228,7 +230,7 @@ export class MainThreadCommentController {
 			threadId,
 			URI.revive(resource).toString(),
 			range,
-			false
+			true
 		);
 
 		this._threads.set(commentThreadHandle, thread);
@@ -351,6 +353,9 @@ export class MainThreadCommentController {
 	}
 }
 
+
+const commentsViewIcon = registerIcon('comments-view-icon', Codicon.commentDiscussion, localize('commentsViewIcon', 'View icon of the comments view.'));
+
 @extHostNamedCustomer(MainContext.MainThreadComments)
 export class MainThreadComments extends Disposable implements MainThreadCommentsShape {
 	private readonly _proxy: ExtHostCommentsShape;
@@ -468,11 +473,11 @@ export class MainThreadComments extends Disposable implements MainThreadComments
 		if (!commentsViewAlreadyRegistered) {
 			const VIEW_CONTAINER: ViewContainer = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContainersRegistry).registerViewContainer({
 				id: COMMENTS_VIEW_ID,
-				name: COMMENTS_VIEW_TITLE,
+				title: COMMENTS_VIEW_TITLE,
 				ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [COMMENTS_VIEW_ID, { mergeViewWithContainerWhenSingleView: true, donotShowContainerTitleWhenMergedWithContainer: true }]),
 				storageId: COMMENTS_VIEW_TITLE,
 				hideIfEmpty: true,
-				icon: Codicon.commentDiscussion.classNames,
+				icon: commentsViewIcon,
 				order: 10,
 			}, ViewContainerLocation.Panel);
 
@@ -482,7 +487,7 @@ export class MainThreadComments extends Disposable implements MainThreadComments
 				canToggleVisibility: false,
 				ctorDescriptor: new SyncDescriptor(CommentsPanel),
 				canMoveView: true,
-				containerIcon: Codicon.commentDiscussion.classNames,
+				containerIcon: commentsViewIcon,
 				focusCommand: {
 					id: 'workbench.action.focusCommentsPanel'
 				}

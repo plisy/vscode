@@ -213,7 +213,9 @@
 		{
 			"name": "Invalid",
 			"scope": "invalid",
-			"settings": {}
+			"settings": {
+				"foreground": "#cd3131"
+			}
 		},
 		{
 			"name": "diff: header",
@@ -436,7 +438,7 @@
 		// "tab.activeBackground": "",
 		// "tab.activeForeground": "",
 		// "tab.inactiveForeground": "",
-		"tab.lastPinnedBorder": "#EEE8D5",
+		"tab.lastPinnedBorder": "#FDF6E3",
 
 		// Workbench: Activity Bar
 		"activityBar.background": "#DDD6C1",

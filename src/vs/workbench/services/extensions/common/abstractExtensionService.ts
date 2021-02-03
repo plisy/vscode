@@ -40,6 +40,7 @@ export function parseScannedExtension(extension: ITranslatedScannedExtension): I
 	return {
 		identifier: new ExtensionIdentifier(`${extension.packageJSON.publisher}.${extension.packageJSON.name}`),
 		isBuiltin: extension.type === ExtensionType.System,
+		isUserBuiltin: false,
 		isUnderDevelopment: false,
 		extensionLocation: extension.location,
 		...extension.packageJSON,
@@ -140,7 +141,7 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			let toAdd: IExtension[] = [];
 			let toRemove: string[] = [];
 			for (const extension of extensions) {
-				if (this._extensionEnablementService.isEnabled(extension)) {
+				if (this._safeInvokeIsEnabled(extension)) {
 					// an extension has been enabled
 					toAdd.push(extension);
 				} else {
@@ -153,7 +154,7 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 
 		this._register(this._extensionManagementService.onDidInstallExtension((event) => {
 			if (event.local) {
-				if (this._extensionEnablementService.isEnabled(event.local)) {
+				if (this._safeInvokeIsEnabled(event.local)) {
 					// an extension has been installed
 					this._handleDeltaExtensions(new DeltaExtensionsQueueItem([event.local], []));
 				}
@@ -384,7 +385,7 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			).then(() => { });
 		} else if (hasWorkspaceContains) {
 			const workspace = await this._contextService.getCompleteWorkspace();
-			const forceUsingSearch = !!this._environmentService.configuration.remoteAuthority;
+			const forceUsingSearch = !!this._environmentService.remoteAuthority;
 			const host: IWorkspaceContainsActivationHost = {
 				folders: workspace.folders.map(folder => folder.uri),
 				forceUsingSearch: forceUsingSearch,
@@ -406,21 +407,20 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 	//#endregion
 
 	protected async _initialize(): Promise<void> {
-		perf.mark('willLoadExtensions');
+		perf.mark('code/willLoadExtensions');
 		this._startExtensionHosts(true, []);
-		this.whenInstalledExtensionsRegistered().then(() => perf.mark('didLoadExtensions'));
 		await this._scanAndHandleExtensions();
 		this._releaseBarrier();
+		perf.mark('code/didLoadExtensions');
 	}
 
 	private _releaseBarrier(): void {
-		perf.mark('extensionHostReady');
 		this._installedExtensionsReady.open();
 		this._onDidRegisterExtensions.fire(undefined);
 		this._onDidChangeExtensionsStatus.fire(this._registry.getAllExtensionDescriptions().map(e => e.identifier));
 	}
 
-	private _stopExtensionHosts(): void {
+	protected _stopExtensionHosts(): void {
 		let previouslyActivatedExtensionIds: ExtensionIdentifier[] = [];
 		this._extensionHostActiveExtensions.forEach((value) => {
 			previouslyActivatedExtensionIds.push(value);
@@ -464,7 +464,9 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 
 	protected _onExtensionHostCrashed(extensionHost: ExtensionHostManager, code: number, signal: string | null): void {
 		console.error('Extension host terminated unexpectedly. Code: ', code, ' Signal: ', signal);
-		this._stopExtensionHosts();
+		if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
+			this._stopExtensionHosts();
+		}
 	}
 
 	//#region IExtensionService
@@ -617,7 +619,15 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			return false;
 		}
 
-		return this._extensionEnablementService.isEnabled(toExtension(extension));
+		return this._safeInvokeIsEnabled(toExtension(extension));
+	}
+
+	protected _safeInvokeIsEnabled(extension: IExtension): boolean {
+		try {
+			return this._extensionEnablementService.isEnabled(extension);
+		} catch (err) {
+			return false;
+		}
 	}
 
 	protected _doHandleExtensionPoints(affectedExtensions: IExtensionDescription[]): void {
@@ -635,11 +645,13 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 		const messageHandler = (msg: IMessage) => this._handleExtensionPointMessage(msg);
 		const availableExtensions = this._registry.getAllExtensionDescriptions();
 		const extensionPoints = ExtensionsRegistry.getExtensionPoints();
+		perf.mark('code/willHandleExtensionPoints');
 		for (const extensionPoint of extensionPoints) {
 			if (affectedExtensionPoints[extensionPoint.name]) {
 				AbstractExtensionService._handleExtensionPoint(extensionPoint, availableExtensions, messageHandler);
 			}
 		}
+		perf.mark('code/didHandleExtensionPoints');
 	}
 
 	private _handleExtensionPointMessage(msg: IMessage) {
@@ -690,9 +702,7 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 				});
 			}
 		}
-		perf.mark(`willHandleExtensionPoint/${extensionPoint.name}`);
 		extensionPoint.acceptUsers(users);
-		perf.mark(`didHandleExtensionPoint/${extensionPoint.name}`);
 	}
 
 	private _showMessageToUser(severity: Severity, msg: string): void {
